@@ -1,0 +1,124 @@
+services:
+  # ---------------------------------------------------------------------------
+  # APPLICATION
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${API_PORT:-8080}:8080"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+      - ./config.yaml:/app/config.yaml:ro
+    restart: unless-stopped
+    networks:
+      - agent-net
+
+  # ---------------------------------------------------------------------------
+  # LangGraph Platform (self-hosted — optional)
+  # ---------------------------------------------------------------------------
+  langgraph-server:
+    image: langchain/langgraph-api:latest
+    ports:
+      - "8123:8000"
+    env_file: .env
+    environment:
+      LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY}
+      DATABASE_URI: ${DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - agent-net
+
+  # ---------------------------------------------------------------------------
+  # VECTOR DATABASE — Pinecone or Weaviate (choose one)
+  # ---------------------------------------------------------------------------
+  # NOTE: Pinecone is cloud-hosted (no local container needed).
+  # For Weaviate (self-hosted alternativee):
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.0
+    ports:
+      - "8083:8080"
+      - "50051:50051"  # gRPC
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_APIKEY_ENABLED: "true"
+      AUTHENTICATION_APIKEY_ALLOWED_KEYS: ${WEAVIATE_API_KEY}
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      ENABLE_MODULES: text2vec-openai
+      OPENAI_APIKEY: ${OPENAI_API_KEY}
+      CLUSTER_HOSTNAME: weaviate-node
+      ENABLE_API_BASED_MODULES: "true"
+    volumes:
+      - weaviate-data:/var/lib/weaviate
+    restart: unless-stopped
+    networks:
+      - agent-net
+
+  # ---------------------------------------------------------------------------
+  # OBSERVABILITY — Arize Phoenix (self-hosted)
+  # ---------------------------------------------------------------------------
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    ports:
+      - "6006:6006"    # UI
+      - "4317:4317"    # OTel gRPC
+    environment:
+      PHOENIX_WORKING_DIR: /tmp/phoenix
+    volumes:
+      - phoenix-data:/tmp/phoenix
+    restart: unless-stopped
+    networks:
+      - agent-net
+
+  # ---------------------------------------------------------------------------
+  # DATABASE — PostgreSQL (LangGraph checkpointer)
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-agent_factory_db}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - agent-net
+
+  # ---------------------------------------------------------------------------
+  # CACHE — Redis (agent state hot cache)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    networks:
+      - agent-net
+
+volumes:
+  weaviate-data:
+  postgres-data:
+  redis-data:
+  phoenix-data:
+
+networks:
+  agent-net:
+    driver: bridge

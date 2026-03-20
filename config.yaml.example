@@ -1,0 +1,286 @@
+# =============================================================================
+# AGENT FACTORY — Master Configuration
+# Stack: LangGraph + PydanticAI + o1/o3-mini/Phi-4 + Pinecone/Weaviate +
+#        LangSmith/Arize Phoenix + Guardrails AI + Next.js HITL Dashboard
+# Version: 2.0.0
+# =============================================================================
+
+# =============================================================================
+# DEPLOYMENT MODE
+# =============================================================================
+# poc:        Ollama local models, Chroma in-memory, guardrails disabled
+# production: OpenAI/Anthropic cloud models, Pinecone/Weaviate, full validation
+deployment_mode: poc    # poc | production
+
+# =============================================================================
+# MODULE TOGGLES
+# =============================================================================
+modules:
+  inference:     true      # Core — Ollama in POC, cloud APIs in prod
+  vector_db:     true      # Chroma in POC, Pinecone/Weaviate in prod
+  orchestration: true      # LangGraph — always active
+  guardrails:    false     # Guardrails AI validation — needs guardrails hub
+  observability: false     # LangSmith / Phoenix — needs API key or Docker service
+  frontend:      false     # Next.js HITL Dashboard — needs bun build
+  hitl:          false     # Human-in-the-loop gates — enable for approval workflows
+
+# =============================================================================
+# PROJECT
+# =============================================================================
+project:
+  name: ${PROJECT_NAME}
+  version: "2.0.0"
+  environment: ${ENVIRONMENT}
+  description: "Multi-agent orchestration factory with human-in-the-loop and type-safe validation"
+  compliance:
+    standard: ${COMPLIANCE_STANDARD}
+    audit_logging: ${AUDIT_LOGGING_ENABLED}
+    agent_decision_trail: ${AGENT_DECISION_AUDIT_TRAIL}
+
+# =============================================================================
+# INFERENCE — Multi-model (supervisor + workers)
+# =============================================================================
+inference:
+  # --- POC: Ollama local — free, no API keys ---
+  poc:
+    supervisor:
+      provider: ollama
+      model: qwen3:7b                   # ~5.5 GB VRAM — strong reasoning for supervisor
+      base_url: http://localhost:11434
+    worker:
+      provider: ollama
+      model: qwen3:4b                   # ~3.5 GB VRAM — fast for tool calls
+      base_url: http://localhost:11434
+    embedding:
+      model: nomic-embed-text
+      dimension: 768
+    # If single GPU with <6 GB VRAM, use the same small model for both:
+    # supervisor.model: qwen3:4b
+    # worker.model: qwen3:4b
+
+  # --- Production: Cloud models ---
+  production:
+    supervisor:
+      provider: ${SUPERVISOR_MODEL_PROVIDER}  # openai | anthropic | azure_ai_foundry
+      model: ${SUPERVISOR_MODEL}              # o3-mini | o1 | claude-opus-4
+      temperature: ${SUPERVISOR_TEMPERATURE}
+      max_tokens: ${INFERENCE_MAX_TOKENS}
+      reasoning_effort: high
+
+    worker:
+      provider: ${WORKER_MODEL_PROVIDER}
+      model: ${WORKER_MODEL}                  # gpt-4o-mini | claude-haiku-3-5 | phi-4
+      temperature: ${WORKER_TEMPERATURE}
+      max_tokens: 4096
+
+    # Provider credentials
+    openai:
+      api_key: ${OPENAI_API_KEY}
+      org_id: ${OPENAI_ORG_ID}
+    anthropic:
+      api_key: ${ANTHROPIC_API_KEY}
+    azure_ai_foundry:
+      endpoint: ${AZURE_AI_FOUNDRY_ENDPOINT}
+      api_key: ${AZURE_AI_FOUNDRY_API_KEY}
+      api_version: ${AZURE_AI_FOUNDRY_API_VERSION}
+
+    embedding:
+      model: ${EMBEDDING_MODEL}
+      dimension: ${EMBEDDING_DIMENSION}
+
+  max_retries: ${MAX_RETRIES}
+  timeout_seconds: ${INFERENCE_TIMEOUT_SECONDS}
+
+# =============================================================================
+# ORCHESTRATION — LangGraph + PydanticAI
+# =============================================================================
+orchestration:
+  framework: langgraph
+
+  langgraph:
+    checkpointer: ${LANGGRAPH_CHECKPOINTER}
+    max_recursion_limit: ${LANGGRAPH_MAX_RECURSION_LIMIT}
+    enable_streaming: true
+
+  pydantic_ai:
+    strict_mode: true
+    validate_on:
+      - agent_output
+      - tool_input
+      - tool_output
+
+# =============================================================================
+# AGENTS — Multi-agent role definitions
+# =============================================================================
+agents:
+  max_roles: ${MAX_AGENT_ROLES}
+  debate_rounds: ${AGENT_DEBATE_ROUNDS}
+
+  roles:
+    - id: supervisor
+      name: "Supervisor"
+      description: "Decomposes the task and delegates to specialist agents"
+      model_override:
+        provider: openai
+        model: ${SUPERVISOR_MODEL}
+      tools: []
+      can_spawn_agents: true
+      system_prompt_path: ./prompts/supervisor.md
+
+    - id: researcher
+      name: "Researcher"
+      description: "Retrieves and synthesises information from the vector store"
+      model_override: null
+      tools:
+        - vector_search
+        - web_search
+      system_prompt_path: ./prompts/researcher.md
+
+    - id: critic
+      name: "Critic"
+      description: "Reviews and challenges outputs from other agents"
+      model_override: null
+      tools: []
+      system_prompt_path: ./prompts/critic.md
+
+    - id: writer
+      name: "Writer"
+      description: "Produces the final structured output"
+      model_override: null
+      tools:
+        - document_formatter
+      system_prompt_path: ./prompts/writer.md
+
+  # HITL gates (requires modules.hitl: true)
+  hitl:
+    enabled: ${HITL_ENABLED}
+    timeout_seconds: ${HITL_TIMEOUT_SECONDS}
+    approval_required_at:
+      - "supervisor:task_plan_ready"
+      - "writer:draft_complete"
+    timeout_action: reject
+
+# =============================================================================
+# VECTOR DATABASE
+# =============================================================================
+vector_db:
+  poc:
+    provider: chroma
+    chroma:
+      mode: in-memory
+      persist_directory: ./data/chroma
+      collection_name: agent_factory_docs
+
+  production:
+    provider: ${VECTOR_DB_PROVIDER}     # pinecone | weaviate
+    pinecone:
+      api_key: ${PINECONE_API_KEY}
+      environment: ${PINECONE_ENVIRONMENT}
+      index_name: ${PINECONE_INDEX_NAME}
+      dimension: ${PINECONE_DIMENSION}
+      metric: cosine
+      spec:
+        serverless:
+          cloud: gcp
+          region: us-central1
+      multi_tenancy:
+        enabled: true
+        namespace_strategy: tenant_id
+    weaviate:
+      url: ${WEAVIATE_URL}
+      api_key: ${WEAVIATE_API_KEY}
+      class_name: ${WEAVIATE_CLASS_NAME}
+      multi_tenancy:
+        enabled: true
+
+  search:
+    limit: 10
+    score_threshold: 0.70
+
+# =============================================================================
+# SECURITY — Guardrails AI (requires modules.guardrails: true)
+# =============================================================================
+security:
+  guardrails:
+    enabled: ${GUARDRAILS_ENABLED}
+    validation_mode: ${GUARDRAILS_VALIDATION_MODE}
+    on_fail: ${GUARDRAILS_ON_FAIL}
+    validators: ${GUARDRAILS_VALIDATORS}
+
+  api:
+    jwt_algorithm: HS256
+    jwt_expiry_minutes: 60
+    rate_limiting:
+      enabled: true
+      requests_per_minute: 120
+
+# =============================================================================
+# OBSERVABILITY (requires modules.observability: true)
+# =============================================================================
+observability:
+  backend: ${OBSERVABILITY_BACKEND}     # langsmith | arize-phoenix
+
+  langsmith:
+    tracing_v2: ${LANGCHAIN_TRACING_V2}
+    endpoint: ${LANGCHAIN_ENDPOINT}
+    api_key: ${LANGCHAIN_API_KEY}
+    project: ${LANGCHAIN_PROJECT}
+    capture_agent_steps: true
+    capture_tool_calls: true
+
+  arize_phoenix:
+    host: ${PHOENIX_HOST}
+    project: ${PHOENIX_PROJECT_NAME}
+    local_mode: true
+
+  otel:
+    enabled: ${OTEL_ENABLED}
+    service_name: ${OTEL_SERVICE_NAME}
+    exporter:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT}
+    trace_sample_rate: 1.0
+
+  logging:
+    level: ${LOG_LEVEL}
+    format: json
+    include_trace_id: true
+
+# =============================================================================
+# FRONTEND (requires modules.frontend: true)
+# =============================================================================
+frontend:
+  poc:
+    framework: chainlit
+    port: 8501
+
+  production:
+    framework: nextjs
+    api_url: ${NEXT_PUBLIC_API_URL}
+    ws_url: ${NEXT_PUBLIC_WS_URL}
+    app_name: ${NEXT_PUBLIC_APP_NAME}
+    auth:
+      provider: nextauth
+      secret: ${NEXTAUTH_SECRET}
+      url: ${NEXTAUTH_URL}
+    features:
+      hitl_dashboard: true
+      agent_debate_viewer: true
+      agent_trace_panel: true
+      conversation_export: true
+      dark_mode: true
+      hitl_poll_interval_ms: ${NEXT_PUBLIC_HITL_POLL_INTERVAL}
+
+# =============================================================================
+# API SERVER
+# =============================================================================
+api:
+  host: ${API_HOST}
+  port: ${API_PORT}
+  workers: ${API_WORKERS}
+  cors:
+    origins: ${API_CORS_ORIGINS}
+  max_request_size_mb: 50
+  request_timeout_seconds: 300
+  websocket:
+    enabled: true
+    ping_interval_seconds: 30

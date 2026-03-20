@@ -1,0 +1,87 @@
+[tool.uv]
+[project]
+name = "agent-factory"
+version = "1.0.0"
+description = "Multi-agent orchestration factory — LangGraph + PydanticAI + Pinecone/Weaviate + LangSmith"
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "Proprietary" }
+
+dependencies = [
+    # Inference
+    "openai>=1.67.0",
+    "anthropic>=0.40.0",
+    # Orchestration
+    "langgraph>=0.3.0",
+    "langgraph-checkpoint-postgres>=2.0.0",
+    "langchain-core>=0.3.0",
+    "langchain-community>=0.3.0",
+    "langchain-openai>=0.3.0",
+    "langchain-anthropic>=0.3.0",
+    # Type-safe agent framework
+    "pydantic-ai>=0.1.0",
+    # Vector DB
+    "pinecone>=3.2.0",
+    "weaviate-client>=4.9.0",
+    # Security — Guardrails AI
+    "guardrails-ai>=0.5.0",
+    # Observability — LangSmith
+    "langsmith>=0.3.0",
+    # Observability — Arize Phoenix
+    "arize-phoenix>=4.0.0",
+    "openinference-instrumentation-langchain>=0.1.0",
+    # API framework
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "websockets>=13.0",
+    # Settings
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "python-dotenv>=1.0.1",
+    "pyyaml>=6.0.2",
+    # Observability (OTel)
+    "opentelemetry-sdk>=1.28.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.28.0",
+    "opentelemetry-instrumentation-fastapi>=0.49b0",
+    "opentelemetry-instrumentation-httpx>=0.49b0",
+    "python-json-logger>=3.2.0",
+    # Database
+    "asyncpg>=0.30.0",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "redis>=5.2.0",
+    "httpx>=0.28.0",
+]
+
+[project.optional-dependencies]
+poc = [
+    "chromadb>=0.6.0",                # In-memory vector DB for POC mode
+    "chainlit>=2.0.0",                # Zero-config chat UI for POC mode
+]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.9.0",
+    "mypy>=1.14.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--cov=src --cov-report=term-missing --cov-fail-under=80"
